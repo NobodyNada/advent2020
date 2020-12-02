@@ -1,22 +1,10 @@
-use std::io::{self, BufRead};
+mod part1;
+mod part2;
 
 fn main() {
-    // The sum we're looking for.
-    const TARGET: usize = 2020;
-
-    // Values which we've encountered in the input so far.
-    let mut seen = vec![false; TARGET];
-    
-    for line in io::stdin().lock().lines() {
-        let value = line.expect("read error")
-            .parse::<usize>().expect("invalid integer");
-        assert!(value <= TARGET, "value {} out of range", value);
-
-        seen[value] = true;
-        let other = TARGET - value;
-        if seen[other] {
-            println!("{}", value * other);
-            break;
-        }
+    match std::env::args().nth(1).map(|arg| arg.parse::<i32>()) {
+        Some(Ok(1)) => part1::run(),
+        Some(Ok(2)) => part2::run(),
+        _ => panic!("usage: {} 1|2", std::env::args().nth(0).unwrap())
     }
 }
