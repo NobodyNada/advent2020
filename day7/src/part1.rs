@@ -37,8 +37,6 @@ impl Bag {
     }
 
     fn can_contain_recursive(&self, target: &str, all_bags: &HashMap<String, Bag>, checked: &mut HashSet<String>) -> bool {
-        for _ in 0..checked.len() { print!(" "); }
-        println!("{}", self.color);
         // Do a depth-first search, skipping bags we've already checked.
         if self.color == target { true }
         else if !checked.insert(self.color.clone()) { false } // We've already checked this one. 
@@ -60,7 +58,6 @@ pub fn run() {
         (bag.color.clone(), bag)
     }).collect();
     let result = bags.iter().filter(|(_, bag)| {
-        println!("\n\nCHECK {}", bag.color);
         bag.can_contain("shiny gold", &bags)
     }).count() - 1; // -1 because "shiny gold" itself doesn't count
     println!("{}", result);
