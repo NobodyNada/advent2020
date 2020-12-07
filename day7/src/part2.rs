@@ -1,7 +1,5 @@
 use std::io::{self, BufRead};
 use std::collections::HashMap;
-use regex;
-use lazy_static::lazy_static;
 
 struct Bag {
     color: String,
@@ -10,19 +8,20 @@ struct Bag {
 
 impl Bag {
     fn parse(input: &str) -> Bag {
-        lazy_static! {
+        lazy_static::lazy_static! {
             static ref OUTER: regex::Regex = regex::Regex::new(r"^(\w+ \w+) bags contain (.*)$").unwrap();
             static ref INNER: regex::Regex = regex::Regex::new(r"^\s*(\d+) (\w+ \w+) bags?(?:\s*|\.)$").unwrap();
         }
 
-        let outer = OUTER.captures(&input).expect(&format!("invalid line {}", input));
+        let outer = OUTER.captures(&input).unwrap_or_else(|| panic!("invalid line {}", input));
         let color = outer.get(1).unwrap().as_str().to_string();
         let contents: Vec<(usize, String)> = outer.get(2).unwrap().as_str()
-            .split(",").filter_map(|item|
+            .split(',').filter_map(|item|
                 match item {
                     "no other bags." => None,
                     _ =>  {
-                        let inner = INNER.captures(&item).expect(&format!("invalid item '{}' in line '{}'", item, input));
+                        let inner = INNER.captures(&item)
+                            .unwrap_or_else(|| panic!("invalid item '{}' in line '{}'", item, input));
                         Some((inner.get(1).unwrap().as_str().parse::<usize>().unwrap(), // quantity 
                          inner.get(2).unwrap().as_str().to_string()))
                     }
@@ -33,7 +32,7 @@ impl Bag {
 
     fn num_contained(&self, all_bags: &HashMap<String, Bag>) -> usize {
         self.contents.iter().fold(1, |accum, (count, color)|
-            accum + count*all_bags.get(color).expect(&format!("color {} missing", color))
+            accum + count*all_bags.get(color).unwrap_or_else(|| panic!("color {} missing", color))
                 .num_contained(&all_bags)
         )
     }
