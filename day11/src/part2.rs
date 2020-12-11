@@ -99,7 +99,7 @@ impl Grid<Cell> {
                 let new = match (*current, occupied_neighbors) {
                     (Cell::Empty, 0) => Cell::Occupied,
                     (Cell::Occupied, adjacent) =>
-                        if adjacent < 4 { Cell::Occupied }
+                        if adjacent < 5 { Cell::Occupied }
                         else { Cell::Empty },
                     (cell, _) => cell
                 };
