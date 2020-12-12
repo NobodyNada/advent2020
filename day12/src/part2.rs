@@ -64,6 +64,5 @@ pub fn run() {
             _ => panic!("invalid operation")
         }
     }
-    dbg!(coords);
     println!("{}", coords.0.abs() + coords.1.abs());
 }
