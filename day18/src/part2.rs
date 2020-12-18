@@ -195,7 +195,8 @@ fn parse_(stream: &mut impl Iterator<Item=Result<Token, ParseError>>, parentheti
     let mut rhs = final_value;
     // We've successfully reached the end of the expression.
     // The operators left on the stack are in order of
-    // strictly increasing precedence, 
+    // strictly increasing precedence, so we can just
+    // evaluate everything from right-to-left.
     for (lhs, op) in operator_stack.into_iter().rev() {
         rhs = op.apply(lhs, rhs);
     }
