@@ -132,13 +132,6 @@ impl<S: Iterator<Item=char>> TokenStream<S> {
 
 // The parser
 
-/// The token stream should consist of a sequence of (value, operator) pairs.
-/// The parser context keeps track of our position in the sequence.
-enum ParseContext {
-    ExpectingValue,
-    ExpectingOperator(i64)
-}
-
 /// Parses an expression.
 fn parse(stream: &mut impl Iterator<Item=Result<Token, ParseError>>) -> Result<i64, ParseError> {
     parse_(stream, false)
@@ -154,9 +147,7 @@ fn parse_(stream: &mut impl Iterator<Item=Result<Token, ParseError>>, parentheti
     // we immediately evaluate A*B.to preserve the strictly-increasing order.
     let mut operator_stack = Vec::<(i64, Operator)>::new();
 
-    let mut context = ParseContext::ExpectingValue;
-
-    let rhs = loop {
+    let final_value = loop {
         // Parse a value.
         // If we find the end of the expression instead, return an error.
         let value_tok = stream.next().unwrap_or(Err(ParseError::UnexpectedEOF))?;
@@ -165,7 +156,7 @@ fn parse_(stream: &mut impl Iterator<Item=Result<Token, ParseError>>, parentheti
             Token::OpenParen => parse_(stream, true)?,
 
             _ => return Err(ParseError::ExpectedValue),
-        }
+        };
 
         // (Try to) parse an operator token.
         // If we find the end the expression instead, return the last value.
@@ -176,10 +167,10 @@ fn parse_(stream: &mut impl Iterator<Item=Result<Token, ParseError>>, parentheti
                 // Was it *supposed* to be a parenthetical expression?
                 // If so, stop parsing. and return the last value.
                 if parenthetical { break value; } 
-                else { Err(ParseError::UnbalancedParens)? },
+                else { return Err(ParseError::UnbalancedParens) },
 
             None =>     // This is the end of the input. Was it supposed to end here?
-                if parenthetical { Err(ParseError::UnexpectedEOF)? }
+                if parenthetical { return Err(ParseError::UnexpectedEOF) }
                 else { break value; },
 
             Some(Ok(_)) => return Err(ParseError::ExpectedOperator),
@@ -201,6 +192,7 @@ fn parse_(stream: &mut impl Iterator<Item=Result<Token, ParseError>>, parentheti
         operator_stack.push((value, operator));
     };
 
+    let mut rhs = final_value;
     // We've successfully reached the end of the expression.
     // The operators left on the stack are in order of
     // strictly increasing precedence, 
@@ -211,14 +203,10 @@ fn parse_(stream: &mut impl Iterator<Item=Result<Token, ParseError>>, parentheti
 }
 
 pub fn run() {
-    let mut result = 0;
+    let stdin = io::stdin();
+    let results = stdin.lock().lines()
+        .map(|line| line.expect("read error"))
+        .map(|line| parse(&mut TokenStream::new(line.chars())).expect("parse error"));
 
-    for line in io::stdin().lock().lines() {
-        let line = line.expect("read error");
-        let mut tokens = TokenStream::new(line.chars());
-
-        result += parse(&mut tokens).unwrap();
-    }
-
-    println!("{}", result);
+    println!("{}", results.sum::<i64>());
 }
