@@ -1,5 +1,16 @@
 use std::io::{self, BufRead};
 
+// Token definitions
+
+/// A token in the input stream.
+#[derive(Clone, Copy, Debug)]
+enum Token {
+    Operator(Operator),
+    OpenParen,
+    CloseParen,
+    Value(i64)
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Operator {
     Add,
@@ -9,6 +20,7 @@ enum Operator {
 }
 
 impl Operator {
+    /// Converts a character to an operator.
     fn parse(c: char) -> Option<Operator> {
         match c {
             '+' => Some(Operator::Add),
@@ -19,6 +31,7 @@ impl Operator {
         }
     }
 
+    /// Computes 'lhs op rhs'.
     fn apply(&self, lhs: i64, rhs: i64) -> i64 {
         match self {
             Operator::Add => lhs + rhs,
@@ -28,6 +41,8 @@ impl Operator {
         }
     }
 
+    /// Returns an integer representing the precedence of this operator.
+    /// Operators with higher `precedence()` should be evaluated first.
     fn precedence(&self) -> u32 {
         match self {
             Operator::Add | Operator::Subtract => 1,
@@ -36,41 +51,42 @@ impl Operator {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Token {
-    Operator(Operator),
-    OpenParen,
-    CloseParen,
-    Value(i64)
-}
 
-struct TokenStream<S: Iterator<Item=char>> {
-    stream: std::iter::Peekable<S>
-}
-
+/// An error that can occur during lexing or parsing.
 #[derive(Debug)]
 enum ParseError {
+    InvalidValue(<i64 as std::str::FromStr>::Err),
     UnexpectedEOF,
     ExpectedValue,
     ExpectedOperator,
-    UnbalancedParens,
-    InvalidValue(<i64 as std::str::FromStr>::Err)
+    UnbalancedParens
+}
+
+// The lexer
+
+/// An iterator which converts a stream of characters into a stream of tokens.
+struct TokenStream<S: Iterator<Item=char>> {
+    stream: std::iter::Peekable<S>
 }
 
 impl<S: Iterator<Item=char>> Iterator for TokenStream<S> {
     type Item = Result<Token, ParseError>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(true) = self.stream.peek().map(|c| c.is_whitespace()) {
+    fn next(&mut self) -> Option<Result<Token, ParseError>> {
+        // Skip whitespace characters
+        while self.stream.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
             self.stream.next();
         }
+
         match self.stream.peek() {
             None => None,
             Some(&c) => {
-                if let Some(control) = Self::is_control(c) { 
+                // Is this a special character?
+                if let Some(special) = Self::is_special(c) { 
                     self.stream.next();
-                    Some(Ok(control)) 
+                    Some(Ok(special)) 
                 }
+                // Is this a valid value?
                 else { Some(self.read_value().map(Token::Value)) }
             }
         }
@@ -79,35 +95,34 @@ impl<S: Iterator<Item=char>> Iterator for TokenStream<S> {
 }
 
 impl<S: Iterator<Item=char>> TokenStream<S> {
+    /// Creates a new TokenStream.
     fn new(stream: S) -> Self {
         Self { stream: stream.peekable() }
     }
 
+    /// Reads an integer into a token.
     fn read_value(&mut self) -> Result<i64, ParseError> {
-        let value = self.stream.peek();
-        let mut value: String = [value.ok_or(ParseError::UnexpectedEOF)?]
-            .iter().cloned().collect();
+        let value = self.stream.next().ok_or(ParseError::UnexpectedEOF)?;
+        let mut value: String = value.to_string();
 
-        // consume value
-        self.stream.next();
-
-        // while we have more input and it's not a control character
+        // while we have more input...
         while let Some(&c) = self.stream.peek() {
-            if c.is_whitespace() {
-                // consume 
-                self.stream.next();
-            }
-            else if Self::is_control(c).is_none() {
+            if c.is_whitespace() || Self::is_special(c).is_some() {
+                // We've hit a delimiter; stop
+                break;
+            } else {
+                // Add it to the string.
                 self.stream.next();
                 value.push(c);
-            } else {
-                break;
             }
         }
+
+        // Convert to integer
         value.parse().map_err(ParseError::InvalidValue)
     }
 
-    fn is_control(c: char) -> Option<Token> {
+    /// Is this character an operator or parenthesis?
+    fn is_special(c: char) -> Option<Token> {
         if let Some(op) = Operator::parse(c) { Some(Token::Operator(op)) }
         else if c == '(' { Some(Token::OpenParen) }
         else if c == ')' { Some(Token::CloseParen) }
@@ -115,85 +130,84 @@ impl<S: Iterator<Item=char>> TokenStream<S> {
     }
 }
 
+// The parser
+
+/// The token stream should consist of a sequence of (value, operator) pairs.
+/// The parser context keeps track of our position in the sequence.
 enum ParseContext {
     ExpectingValue,
     ExpectingOperator(i64)
 }
 
-enum TerminationReason {
-    EndOfInput,
-    CloseParen
+/// Parses an expression.
+fn parse(stream: &mut impl Iterator<Item=Result<Token, ParseError>>) -> Result<i64, ParseError> {
+    parse_(stream, false)
 }
 
-fn parse_expr(stream: &mut impl Iterator<Item=Result<Token, ParseError>>) 
-    -> Result<(i64, TerminationReason), ParseError> {
-
-    let mut termination_reason = TerminationReason::EndOfInput;
+/// Parses an expression. paranthetical is false if this is a root expression, or true if this is
+/// nested inside another expression using parantheses.
+fn parse_(stream: &mut impl Iterator<Item=Result<Token, ParseError>>, parenthetical: bool) 
+    -> Result<i64, ParseError> {
 
     // A chain of 'value operator' sequences of strictly increasing precedence.
-    // When we see an inversion (A*B + C), we evaluate A*B 
+    // When we see an inversion in the sequence such as A*B + C (or A*B*C),
+    // we immediately evaluate A*B.to preserve the strictly-increasing order.
     let mut operator_stack = Vec::<(i64, Operator)>::new();
+
     let mut context = ParseContext::ExpectingValue;
 
-    while let Some(token) = stream.next() {
-        let token = token?;
-        if let Token::CloseParen = token { 
-            termination_reason = TerminationReason::CloseParen;
-            break;
+    let rhs = loop {
+        // Parse a value.
+        // If we find the end of the expression instead, return an error.
+        let value_tok = stream.next().unwrap_or(Err(ParseError::UnexpectedEOF))?;
+        let value = match value_tok {
+            Token::Value(value) => value,
+            Token::OpenParen => parse_(stream, true)?,
+
+            _ => return Err(ParseError::ExpectedValue),
         }
 
-        context = match context {
-            ParseContext::ExpectingValue => match token {
-                // If this is a value, good -- that's what we're looking for.
-                Token::Value(value) => ParseContext::ExpectingOperator(value),
+        // (Try to) parse an operator token.
+        // If we find the end the expression instead, return the last value.
+        let operator = match stream.next() {
+            Some(Ok(Token::Operator(op))) => op,
 
-                // If this is a parenthesis, parse a sub-expression.
-                Token::OpenParen => match parse_expr(stream)? {
-                    // The expression should have terminated with a closing parenthesis.
-                    (value, TerminationReason::CloseParen) => ParseContext::ExpectingOperator(value),
-                    (_, TerminationReason::EndOfInput) => return Err(ParseError::UnexpectedEOF)
-                }
-                _ => return Err(ParseError::ExpectedValue)
-            },
-            ParseContext::ExpectingOperator(mut value) => {
-                let next_op = 
-                    if let Token::Operator(op) = token { op }
-                    else { return Err(ParseError::ExpectedOperator) };
+            Some(Ok(Token::CloseParen)) => // This is the end of a parenthetical expression.
+                // Was it *supposed* to be a parenthetical expression?
+                // If so, stop parsing. and return the last value.
+                if parenthetical { break value; } 
+                else { Err(ParseError::UnbalancedParens)? },
 
-                // If we have a pattern of the form '... A*B +', evaluate A*B.
-                while let Some(&(prev_value, prev_op)) = operator_stack.last() {
-                    if prev_op.precedence() >= next_op.precedence() {
-                        operator_stack.pop();
-                        value = prev_op.apply(prev_value, value);
-                    } else {
-                        break;
-                    }
-                }
-                
-                operator_stack.push((value, next_op));
-                ParseContext::ExpectingValue
+            None =>     // This is the end of the input. Was it supposed to end here?
+                if parenthetical { Err(ParseError::UnexpectedEOF)? }
+                else { break value; },
+
+            Some(Ok(_)) => return Err(ParseError::ExpectedOperator),
+            Some(Err(e)) => return Err(e)
+        };
+    
+        // We have a (value, operator) pair; add it to the stack.
+        // If we have a pattern of the form '... A*B +', evaluate A*B.
+        let mut value = value;
+        while let Some(&(prev_value, prev_op)) = operator_stack.last() {
+            if prev_op.precedence() >= operator.precedence() {
+                operator_stack.pop();
+                value = prev_op.apply(prev_value, value);
+            } else {
+                break;
             }
         }
-    }
+        
+        operator_stack.push((value, operator));
+    };
 
-    // We've reached the end of the expression.
-    match context {
-        ParseContext::ExpectingValue => Err(ParseError::UnexpectedEOF),
-        ParseContext::ExpectingOperator(mut rhs) => {
-            for (lhs, op) in operator_stack.into_iter().rev() {
-                rhs = op.apply(lhs, rhs);
-            }
-            Ok((rhs, termination_reason))
-        }
+    // We've successfully reached the end of the expression.
+    // The operators left on the stack are in order of
+    // strictly increasing precedence, 
+    for (lhs, op) in operator_stack.into_iter().rev() {
+        rhs = op.apply(lhs, rhs);
     }
-}
-
-fn parse(stream: &mut impl Iterator<Item=Result<Token, ParseError>>) -> Result<i64, ParseError> {
-    match parse_expr(stream) {
-        Ok((value, TerminationReason::EndOfInput)) => Ok(value),
-        Ok((_, TerminationReason::CloseParen)) => Err(ParseError::UnbalancedParens),
-        Err(e) => Err(e)
-    }
+    Ok(rhs)
 }
 
 pub fn run() {
